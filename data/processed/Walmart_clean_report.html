@@ -1,0 +1,729 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <title>Laporan EDA — Walmart.csv</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "Times New Roman", serif;
+      font-size: 10.5pt;
+      color: #000;
+      background: #fff;
+      padding: 12mm 14mm;
+    }
+    h1 { font-size: 14pt; text-align: center; margin-bottom: 4px; }
+    h2 {
+      font-size: 12pt; margin: 20px 0 8px;
+      border-bottom: 2px solid #000; padding-bottom: 4px;
+      page-break-after: avoid;
+    }
+    h3 {
+      font-size: 10.5pt; margin: 14px 0 5px;
+      page-break-after: avoid; color: #1a1a1a;
+    }
+    p { line-height: 1.8; margin-top: 5px; font-size: 10.5pt; }
+    .tbl-note { font-size: 8.5pt; color: #666; margin-bottom: 5px; font-style: italic; }
+
+    .header {
+      text-align: center; border-bottom: 3px double #000;
+      padding-bottom: 12px; margin-bottom: 16px;
+    }
+    .header p { font-size: 10pt; margin-top: 3px; }
+
+    .info-table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+    .info-table td { padding: 4px 8px; font-size: 10pt; vertical-align: top; border-bottom: 1px solid #eee; }
+    .info-table td:first-child { font-weight: bold; width: 36%; white-space: nowrap; }
+
+    .summary-grid {
+      display: grid; grid-template-columns: repeat(4, 1fr);
+      gap: 8px; margin-bottom: 12px;
+    }
+    .summary-box {
+      border: 1px solid #ccc; border-radius: 5px;
+      padding: 8px 10px; text-align: center; background: #fafafa;
+    }
+    .summary-box .label { font-size: 8pt; color: #666; margin-bottom: 3px; }
+    .summary-box .value { font-size: 14pt; font-weight: 700; line-height: 1.2; }
+    .summary-box .sub { font-size: 7.5pt; color: #888; margin-top: 2px; }
+
+    .status-box {
+      padding: 9px 13px; border-radius: 5px; margin-bottom: 10px;
+      border: 1px solid #dceeff; background: #f8fbff; font-size: 10pt;
+    }
+    .quality-box {
+      padding: 10px 14px; border-radius: 5px; margin-bottom: 12px;
+      border: 2px solid #ddd; background: #fafafa;
+      display: flex; align-items: center; gap: 16px;
+    }
+
+    table.data-tbl {
+      width: 100%; border-collapse: collapse;
+      margin-bottom: 12px; font-size: 7.5pt;
+      table-layout: auto;
+    }
+    table.data-tbl th {
+      background: #1a1a1a; color: #fff;
+      padding: 5px 4px; text-align: center;
+      font-size: 7.5pt; white-space: nowrap;
+      border: 1px solid #333;
+    }
+    table.data-tbl td {
+      border: 1px solid #ccc; padding: 3px 4px;
+      text-align: center; vertical-align: middle;
+      word-break: break-word;
+    }
+    table.data-tbl tr:nth-child(even) td { background: #f7f7f7; }
+    table.data-tbl tr:hover td { background: #eef4ff; }
+
+    ul { margin-left: 18px; line-height: 1.9; }
+    li { margin-bottom: 3px; font-size: 10pt; }
+
+    .footer {
+      margin-top: 32px; border-top: 1px solid #000;
+      padding-top: 9px; font-size: 9pt;
+      text-align: center; color: #444;
+    }
+    .page-break { page-break-before: always; }
+    .avoid-break { page-break-inside: avoid; }
+    .section-note {
+      font-size: 9pt; color: #555; background: #fffbe6;
+      border-left: 3px solid #f5e642; padding: 6px 10px;
+      margin-bottom: 10px; border-radius: 0 4px 4px 0;
+    }
+
+    @media print {
+      body { padding: 0; }
+      @page { margin: 12mm 12mm; size: A4 landscape; }
+      .page-break { page-break-before: always; }
+      .avoid-break { page-break-inside: avoid; }
+      table.data-tbl { font-size: 7pt; }
+      table.data-tbl th, table.data-tbl td { padding: 2px 3px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ══ HEADER ══════════════════════════════════════════════ -->
+<div class="header">
+  <h1>LAPORAN ANALISIS DATA EKSPLORASI OTOMATIS</h1>
+  <p><strong>Auto EDA Analytics Dashboard</strong> — SD-1306 Data Science Programming</p>
+  <p>Kelompok 1 | Kelas A | Institut Teknologi Sains Bandung</p>
+  <p>Dosen: <strong>Bakti Siregar, M.Sc., CDS.</strong></p>
+  <p style="margin-top:7px;font-size:9pt;color:#555;">Dibuat: 10/6/2026, 19.19.26</p>
+</div>
+
+<!-- ══ 1. INFORMASI DATASET ════════════════════════════════ -->
+<h2>1. Informasi Dataset</h2>
+
+<div class="quality-box avoid-break">
+  <div style="text-align:center;min-width:80px;">
+    <div style="font-size:28pt;font-weight:700;color:#1a7a2a;line-height:1;">100%</div>
+    <div style="font-size:8.5pt;font-weight:700;color:#1a7a2a;">Sangat Baik</div>
+    <div style="font-size:7.5pt;color:#888;margin-top:2px;">Skor Kualitas Data</div>
+  </div>
+  <div style="flex:1;">
+    <div style="font-size:9pt;color:#444;margin-bottom:5px;">
+      ⚠ 967 outlier terdeteksi
+    </div>
+    <div style="background:#eee;border-radius:10px;height:10px;width:100%;overflow:hidden;">
+      <div style="background:#1a7a2a;height:100%;width:100%;border-radius:10px;"></div>
+    </div>
+  </div>
+</div>
+
+<div class="summary-grid avoid-break">
+  <div class="summary-box">
+    <div class="label">Nama File</div>
+    <div class="value" style="font-size:10pt;word-break:break-all;">Walmart.csv</div>
+  </div>
+  <div class="summary-box">
+    <div class="label">Baris Asli</div>
+    <div class="value">6.435</div>
+    <div class="sub">sebelum cleaning</div>
+  </div>
+  <div class="summary-box">
+    <div class="label">Baris Cleaned</div>
+    <div class="value">6.435</div>
+    <div class="sub">0 baris dihapus</div>
+  </div>
+  <div class="summary-box">
+    <div class="label">Total Kolom</div>
+    <div class="value">8</div>
+    <div class="sub">7 num · 0 cat · 1 dt</div>
+  </div>
+</div>
+
+<table class="info-table avoid-break">
+  <tr><td>Missing Values (Sebelum Cleaning)</td><td>0 sel (0.00% dari total sel)</td></tr>
+  <tr><td>Missing Values (Setelah Cleaning)</td><td>0 sel (0.00% dari total sel)</td></tr>
+  <tr><td>Duplikat (Sebelum Cleaning)</td><td>0 baris (0.0%)</td></tr>
+  <tr><td>Duplikat (Setelah Cleaning)</td><td>0 baris (0.0%)</td></tr>
+  <tr><td>Kolom Numerik</td><td>Store, Weekly_Sales, Holiday_Flag, Temperature, Fuel_Price, CPI, Unemployment</td></tr>
+  <tr><td>Kolom Kategorik</td><td>Tidak ada</td></tr>
+  <tr><td>Kolom Datetime</td><td>Date</td></tr>
+</table>
+
+<div class="status-box avoid-break">
+  <strong>Status Dataset:</strong>
+  ✅ Dataset valid dan bersih — siap digunakan untuk analisis lanjutan atau pemodelan.
+</div>
+
+<!-- ══ 2. PROSES DATA CLEANING ═════════════════════════════ -->
+<h2>2. Proses Data Cleaning</h2>
+<div class="avoid-break">
+  <h3>2.1 Log Proses Cleaning</h3>
+  <ul><li>Belum ada proses cleaning yang dilakukan pada sesi ini.</li></ul>
+
+  <h3 style="margin-top:14px;">2.2 Perbandingan Missing Values Before vs After (per Kolom)</h3>
+  <table class="data-tbl">
+    <thead><tr>
+      <th>Nama Kolom</th><th>Tipe Data</th>
+      <th>Missing Sebelum</th><th>Missing Setelah</th><th>Status</th>
+    </tr></thead>
+    <tbody><tr>
+      <td style="text-align:left;font-weight:600;">Store</td>
+      <td>Numerik</td>
+      <td>0 (0.0%)</td>
+      <td>0 (0.0%)</td>
+      <td style="color:#1a7a2a;font-weight:700;">✔ Bersih</td>
+    </tr><tr>
+      <td style="text-align:left;font-weight:600;">Date</td>
+      <td>Datetime</td>
+      <td>0 (0.0%)</td>
+      <td>0 (0.0%)</td>
+      <td style="color:#1a7a2a;font-weight:700;">✔ Bersih</td>
+    </tr><tr>
+      <td style="text-align:left;font-weight:600;">Weekly_Sales</td>
+      <td>Numerik</td>
+      <td>0 (0.0%)</td>
+      <td>0 (0.0%)</td>
+      <td style="color:#1a7a2a;font-weight:700;">✔ Bersih</td>
+    </tr><tr>
+      <td style="text-align:left;font-weight:600;">Holiday_Flag</td>
+      <td>Numerik</td>
+      <td>0 (0.0%)</td>
+      <td>0 (0.0%)</td>
+      <td style="color:#1a7a2a;font-weight:700;">✔ Bersih</td>
+    </tr><tr>
+      <td style="text-align:left;font-weight:600;">Temperature</td>
+      <td>Numerik</td>
+      <td>0 (0.0%)</td>
+      <td>0 (0.0%)</td>
+      <td style="color:#1a7a2a;font-weight:700;">✔ Bersih</td>
+    </tr><tr>
+      <td style="text-align:left;font-weight:600;">Fuel_Price</td>
+      <td>Numerik</td>
+      <td>0 (0.0%)</td>
+      <td>0 (0.0%)</td>
+      <td style="color:#1a7a2a;font-weight:700;">✔ Bersih</td>
+    </tr><tr>
+      <td style="text-align:left;font-weight:600;">CPI</td>
+      <td>Numerik</td>
+      <td>0 (0.0%)</td>
+      <td>0 (0.0%)</td>
+      <td style="color:#1a7a2a;font-weight:700;">✔ Bersih</td>
+    </tr><tr>
+      <td style="text-align:left;font-weight:600;">Unemployment</td>
+      <td>Numerik</td>
+      <td>0 (0.0%)</td>
+      <td>0 (0.0%)</td>
+      <td style="color:#1a7a2a;font-weight:700;">✔ Bersih</td>
+    </tr></tbody>
+  </table>
+</div>
+
+<!-- ══ 3. STATISTIK NUMERIK ════════════════════════════════ -->
+
+<div class="page-break"></div>
+<h2>3. Statistik Deskriptif — Variabel Numerik</h2>
+
+      
+      <p class="tbl-note">Total 7 variabel numerik.</p>
+      <div class="avoid-break">
+        <table class="data-tbl">
+          <thead><tr>
+            <th>Variabel</th><th>N</th><th>Mean</th><th>Median</th><th>Mode</th>
+            <th>Min</th><th>Max</th><th>Range</th><th>Q1</th><th>Q3</th><th>IQR</th>
+            <th>W.Low</th><th>W.High</th><th>Std Dev</th><th>Variance</th><th>CV%</th>
+            <th>Skewness</th><th>Kurtosis</th><th>Missing</th><th>Outlier</th>
+            <th>Distribusi</th><th>Normalitas</th>
+          </tr></thead>
+          <tbody><tr>
+      <td style="text-align:left;font-weight:600;white-space:nowrap;">Store</td>
+      <td>6435</td>
+      <td>23.000</td>
+      <td>23.000</td>
+      <td>1.000</td>
+      <td>1.000</td>
+      <td>45.000</td>
+      <td>44.000</td>
+      <td>12.000</td>
+      <td>34.000</td>
+      <td>22.000</td>
+      <td>1.000</td>
+      <td>45.000</td>
+      <td>12.988</td>
+      <td>168.693</td>
+      <td>56.5%</td>
+      <td>-0.000</td>
+      <td>-1.202</td>
+      <td>0<br><span style="font-size:7pt;">(0.0%)</span></td>
+      <td>0</td>
+      <td>Normal</td>
+      <td>Tdk Normal</td>
+    </tr><tr>
+      <td style="text-align:left;font-weight:600;white-space:nowrap;">Weekly_Sales</td>
+      <td>6435</td>
+      <td>1046964.878</td>
+      <td>960746.040</td>
+      <td>279677.000</td>
+      <td>209986.250</td>
+      <td>3818686.450</td>
+      <td>3608700.200</td>
+      <td>552985.340</td>
+      <td>1420405.410</td>
+      <td>867420.070</td>
+      <td>209986.250</td>
+      <td>2685351.810</td>
+      <td>564366.622</td>
+      <td>318509684088.301</td>
+      <td>53.9%</td>
+      <td>0.668</td>
+      <td>0.051</td>
+      <td>0<br><span style="font-size:7pt;">(0.0%)</span></td>
+      <td>34</td>
+      <td>Mild Right</td>
+      <td>Tdk Normal</td>
+    </tr><tr>
+      <td style="text-align:left;font-weight:600;white-space:nowrap;">Holiday_Flag</td>
+      <td>6435</td>
+      <td>0.070</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>1.000</td>
+      <td>1.000</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>0.255</td>
+      <td>0.065</td>
+      <td>364.7%</td>
+      <td>3.372</td>
+      <td>9.371</td>
+      <td>0<br><span style="font-size:7pt;">(0.0%)</span></td>
+      <td>450</td>
+      <td>Right Skew</td>
+      <td>Tdk Normal</td>
+    </tr><tr>
+      <td style="text-align:left;font-weight:600;white-space:nowrap;">Temperature</td>
+      <td>6435</td>
+      <td>60.664</td>
+      <td>62.670</td>
+      <td>50.430</td>
+      <td>-2.060</td>
+      <td>100.140</td>
+      <td>102.200</td>
+      <td>47.430</td>
+      <td>74.950</td>
+      <td>27.520</td>
+      <td>6.230</td>
+      <td>100.140</td>
+      <td>18.445</td>
+      <td>340.216</td>
+      <td>30.4%</td>
+      <td>-0.337</td>
+      <td>-0.614</td>
+      <td>0<br><span style="font-size:7pt;">(0.0%)</span></td>
+      <td>2</td>
+      <td>Normal</td>
+      <td>Normal</td>
+    </tr><tr>
+      <td style="text-align:left;font-weight:600;white-space:nowrap;">Fuel_Price</td>
+      <td>6435</td>
+      <td>3.359</td>
+      <td>3.445</td>
+      <td>3.638</td>
+      <td>2.472</td>
+      <td>4.468</td>
+      <td>1.996</td>
+      <td>2.933</td>
+      <td>3.735</td>
+      <td>0.802</td>
+      <td>2.472</td>
+      <td>4.468</td>
+      <td>0.459</td>
+      <td>0.211</td>
+      <td>13.7%</td>
+      <td>-0.096</td>
+      <td>-1.178</td>
+      <td>0<br><span style="font-size:7pt;">(0.0%)</span></td>
+      <td>0</td>
+      <td>Normal</td>
+      <td>Tdk Normal</td>
+    </tr></tbody>
+        </table>
+      </div>
+      <div class="page-break"></div>
+      <p class="tbl-note">Lanjutan — variabel 6 s/d 7 dari 7.</p>
+      <div class="avoid-break">
+        <table class="data-tbl">
+          <thead><tr>
+            <th>Variabel</th><th>N</th><th>Mean</th><th>Median</th><th>Mode</th>
+            <th>Min</th><th>Max</th><th>Range</th><th>Q1</th><th>Q3</th><th>IQR</th>
+            <th>W.Low</th><th>W.High</th><th>Std Dev</th><th>Variance</th><th>CV%</th>
+            <th>Skewness</th><th>Kurtosis</th><th>Missing</th><th>Outlier</th>
+            <th>Distribusi</th><th>Normalitas</th>
+          </tr></thead>
+          <tbody><tr>
+      <td style="text-align:left;font-weight:600;white-space:nowrap;">CPI</td>
+      <td>6435</td>
+      <td>171.578</td>
+      <td>182.617</td>
+      <td>126.442</td>
+      <td>126.064</td>
+      <td>227.233</td>
+      <td>101.169</td>
+      <td>131.735</td>
+      <td>212.747</td>
+      <td>81.012</td>
+      <td>126.064</td>
+      <td>227.233</td>
+      <td>39.357</td>
+      <td>1548.951</td>
+      <td>22.9%</td>
+      <td>0.063</td>
+      <td>-1.840</td>
+      <td>0<br><span style="font-size:7pt;">(0.0%)</span></td>
+      <td>0</td>
+      <td>Normal</td>
+      <td>Tdk Normal</td>
+    </tr><tr>
+      <td style="text-align:left;font-weight:600;white-space:nowrap;">Unemployment</td>
+      <td>6435</td>
+      <td>7.999</td>
+      <td>7.874</td>
+      <td>8.099</td>
+      <td>3.879</td>
+      <td>14.313</td>
+      <td>10.434</td>
+      <td>6.891</td>
+      <td>8.622</td>
+      <td>1.731</td>
+      <td>4.308</td>
+      <td>10.926</td>
+      <td>1.876</td>
+      <td>3.519</td>
+      <td>23.5%</td>
+      <td>1.188</td>
+      <td>2.635</td>
+      <td>0<br><span style="font-size:7pt;">(0.0%)</span></td>
+      <td>481</td>
+      <td>Right Skew</td>
+      <td>Tdk Normal</td>
+    </tr></tbody>
+        </table>
+      </div>
+
+
+<!-- ══ 4. STATISTIK KATEGORIK ══════════════════════════════ -->
+
+
+<!-- ══ 5. KORELASI ═════════════════════════════════════════ -->
+
+      <div class="page-break"></div>
+      <h2>5. Analisis Korelasi Antar Variabel Numerik</h2>
+      <div class="avoid-break" style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px;">
+        <div class="summary-box"><div class="label">Total Pasangan</div><div class="value">21</div></div>
+        <div class="summary-box"><div class="label">Korelasi Kuat (|r|>0.7)</div><div class="value" style="color:#c0392b;">0</div></div>
+        <div class="summary-box"><div class="label">Korelasi Sedang</div><div class="value" style="color:#b8660a;">0</div></div>
+        <div class="summary-box"><div class="label">Rata-rata |r|</div><div class="value">0.110</div></div>
+      </div>
+      <div class="avoid-break">
+        <table class="data-tbl">
+          <thead><tr>
+            <th>Variabel 1</th><th>Variabel 2</th>
+            <th>Pearson r</th><th>|r|</th><th>Arah</th><th>Kekuatan</th>
+          </tr></thead>
+          <tbody><tr>
+      <td style="text-align:left;">Store</td>
+      <td style="text-align:left;">Weekly_Sales</td>
+      <td style="font-weight:700;color:#555;">-0.3353</td>
+      <td>0.3353</td>
+      <td>Negatif</td>
+      <td style="font-weight:600;color:#1a7a2a">Lemah</td>
+    </tr><tr>
+      <td style="text-align:left;">CPI</td>
+      <td style="text-align:left;">Unemployment</td>
+      <td style="font-weight:700;color:#555;">-0.3020</td>
+      <td>0.3020</td>
+      <td>Negatif</td>
+      <td style="font-weight:600;color:#1a7a2a">Lemah</td>
+    </tr><tr>
+      <td style="text-align:left;">Store</td>
+      <td style="text-align:left;">Unemployment</td>
+      <td style="font-weight:700;color:#555;">0.2235</td>
+      <td>0.2235</td>
+      <td>Positif</td>
+      <td style="font-weight:600;color:#1a7a2a">Lemah</td>
+    </tr><tr>
+      <td style="text-align:left;">Store</td>
+      <td style="text-align:left;">CPI</td>
+      <td style="font-weight:700;color:#555;">-0.2095</td>
+      <td>0.2095</td>
+      <td>Negatif</td>
+      <td style="font-weight:600;color:#1a7a2a">Lemah</td>
+    </tr><tr>
+      <td style="text-align:left;">Temperature</td>
+      <td style="text-align:left;">CPI</td>
+      <td style="font-weight:700;color:#555;">0.1769</td>
+      <td>0.1769</td>
+      <td>Positif</td>
+      <td style="font-weight:600;color:#1a7a2a">Lemah</td>
+    </tr><tr>
+      <td style="text-align:left;">Fuel_Price</td>
+      <td style="text-align:left;">CPI</td>
+      <td style="font-weight:700;color:#555;">-0.1706</td>
+      <td>0.1706</td>
+      <td>Negatif</td>
+      <td style="font-weight:600;color:#1a7a2a">Lemah</td>
+    </tr><tr>
+      <td style="text-align:left;">Holiday_Flag</td>
+      <td style="text-align:left;">Temperature</td>
+      <td style="font-weight:700;color:#555;">-0.1551</td>
+      <td>0.1551</td>
+      <td>Negatif</td>
+      <td style="font-weight:600;color:#1a7a2a">Lemah</td>
+    </tr><tr>
+      <td style="text-align:left;">Temperature</td>
+      <td style="text-align:left;">Fuel_Price</td>
+      <td style="font-weight:700;color:#555;">0.1450</td>
+      <td>0.1450</td>
+      <td>Positif</td>
+      <td style="font-weight:600;color:#1a7a2a">Lemah</td>
+    </tr><tr>
+      <td style="text-align:left;">Weekly_Sales</td>
+      <td style="text-align:left;">Unemployment</td>
+      <td style="font-weight:700;color:#555;">-0.1062</td>
+      <td>0.1062</td>
+      <td>Negatif</td>
+      <td style="font-weight:600;color:#1a7a2a">Lemah</td>
+    </tr><tr>
+      <td style="text-align:left;">Temperature</td>
+      <td style="text-align:left;">Unemployment</td>
+      <td style="font-weight:700;color:#555;">0.1012</td>
+      <td>0.1012</td>
+      <td>Positif</td>
+      <td style="font-weight:600;color:#1a7a2a">Lemah</td>
+    </tr><tr>
+      <td style="text-align:left;">Holiday_Flag</td>
+      <td style="text-align:left;">Fuel_Price</td>
+      <td style="font-weight:700;color:#555;">-0.0783</td>
+      <td>0.0783</td>
+      <td>Negatif</td>
+      <td style="font-weight:600;color:#1a7a2a">Lemah</td>
+    </tr><tr>
+      <td style="text-align:left;">Weekly_Sales</td>
+      <td style="text-align:left;">CPI</td>
+      <td style="font-weight:700;color:#555;">-0.0726</td>
+      <td>0.0726</td>
+      <td>Negatif</td>
+      <td style="font-weight:600;color:#1a7a2a">Lemah</td>
+    </tr><tr>
+      <td style="text-align:left;">Weekly_Sales</td>
+      <td style="text-align:left;">Temperature</td>
+      <td style="font-weight:700;color:#555;">-0.0638</td>
+      <td>0.0638</td>
+      <td>Negatif</td>
+      <td style="font-weight:600;color:#1a7a2a">Lemah</td>
+    </tr><tr>
+      <td style="text-align:left;">Store</td>
+      <td style="text-align:left;">Fuel_Price</td>
+      <td style="font-weight:700;color:#555;">0.0600</td>
+      <td>0.0600</td>
+      <td>Positif</td>
+      <td style="font-weight:600;color:#1a7a2a">Lemah</td>
+    </tr><tr>
+      <td style="text-align:left;">Weekly_Sales</td>
+      <td style="text-align:left;">Holiday_Flag</td>
+      <td style="font-weight:700;color:#555;">0.0369</td>
+      <td>0.0369</td>
+      <td>Positif</td>
+      <td style="font-weight:600;color:#1a7a2a">Lemah</td>
+    </tr><tr>
+      <td style="text-align:left;">Fuel_Price</td>
+      <td style="text-align:left;">Unemployment</td>
+      <td style="font-weight:700;color:#555;">-0.0347</td>
+      <td>0.0347</td>
+      <td>Negatif</td>
+      <td style="font-weight:600;color:#1a7a2a">Lemah</td>
+    </tr><tr>
+      <td style="text-align:left;">Store</td>
+      <td style="text-align:left;">Temperature</td>
+      <td style="font-weight:700;color:#555;">-0.0227</td>
+      <td>0.0227</td>
+      <td>Negatif</td>
+      <td style="font-weight:600;color:#1a7a2a">Lemah</td>
+    </tr><tr>
+      <td style="text-align:left;">Holiday_Flag</td>
+      <td style="text-align:left;">Unemployment</td>
+      <td style="font-weight:700;color:#555;">0.0110</td>
+      <td>0.0110</td>
+      <td>Positif</td>
+      <td style="font-weight:600;color:#1a7a2a">Lemah</td>
+    </tr><tr>
+      <td style="text-align:left;">Weekly_Sales</td>
+      <td style="text-align:left;">Fuel_Price</td>
+      <td style="font-weight:700;color:#555;">0.0095</td>
+      <td>0.0095</td>
+      <td>Tidak Ada</td>
+      <td style="font-weight:600;color:#1a7a2a">Lemah</td>
+    </tr><tr>
+      <td style="text-align:left;">Holiday_Flag</td>
+      <td style="text-align:left;">CPI</td>
+      <td style="font-weight:700;color:#555;">-0.0022</td>
+      <td>0.0022</td>
+      <td>Tidak Ada</td>
+      <td style="font-weight:600;color:#1a7a2a">Lemah</td>
+    </tr><tr>
+      <td style="text-align:left;">Store</td>
+      <td style="text-align:left;">Holiday_Flag</td>
+      <td style="font-weight:700;color:#555;">0.0000</td>
+      <td>0.0000</td>
+      <td>Tidak Ada</td>
+      <td style="font-weight:600;color:#1a7a2a">Lemah</td>
+    </tr></tbody>
+        </table>
+      </div>
+      
+
+<!-- ══ TIME SERIES ════════════════════════════════════════ -->
+
+        <div class="page-break"></div>
+        <h2>6. Analisis Time Series</h2>
+        <p class="tbl-note">Kolom waktu terdeteksi: <strong>Date</strong>. Total 7 variabel dianalisis.</p>
+        <div class="avoid-break">
+          <table class="data-tbl">
+            <thead><tr>
+              <th>Variabel</th><th>N Data</th><th>Tanggal Awal</th><th>Tanggal Akhir</th>
+              <th>Mean</th><th>Min</th><th>Max</th><th>Std Dev</th>
+              <th>Slope</th><th>Tren</th>
+            </tr></thead>
+            <tbody><tr>
+        <td style="text-align:left;font-weight:600;">Store</td>
+        <td>2565</td>
+        <td>10/1/2010</td>
+        <td>10/12/2012</td>
+        <td>23.000</td>
+        <td>1.000</td>
+        <td>45.000</td>
+        <td>12.987</td>
+        <td>0.0003</td>
+        <td style="font-weight:700;color:#1a5276;">Stabil →</td>
+      </tr><tr>
+        <td style="text-align:left;font-weight:600;">Weekly_Sales</td>
+        <td>2565</td>
+        <td>10/1/2010</td>
+        <td>10/12/2012</td>
+        <td>1059871.952</td>
+        <td>209986.250</td>
+        <td>2752122.080</td>
+        <td>557274.440</td>
+        <td>-1.5311</td>
+        <td style="font-weight:700;color:#c0392b;">Turun ↓</td>
+      </tr><tr>
+        <td style="text-align:left;font-weight:600;">Holiday_Flag</td>
+        <td>2565</td>
+        <td>10/1/2010</td>
+        <td>10/12/2012</td>
+        <td>0.105</td>
+        <td>0.000</td>
+        <td>1.000</td>
+        <td>0.307</td>
+        <td>0.0001</td>
+        <td style="font-weight:700;color:#1a5276;">Stabil →</td>
+      </tr><tr>
+        <td style="text-align:left;font-weight:600;">Temperature</td>
+        <td>2565</td>
+        <td>10/1/2010</td>
+        <td>10/12/2012</td>
+        <td>59.586</td>
+        <td>-2.060</td>
+        <td>100.070</td>
+        <td>19.066</td>
+        <td>0.0008</td>
+        <td style="font-weight:700;color:#1a5276;">Stabil →</td>
+      </tr><tr>
+        <td style="text-align:left;font-weight:600;">Fuel_Price</td>
+        <td>2565</td>
+        <td>10/1/2010</td>
+        <td>10/12/2012</td>
+        <td>3.330</td>
+        <td>2.513</td>
+        <td>4.468</td>
+        <td>0.462</td>
+        <td>0.0005</td>
+        <td style="font-weight:700;color:#1a5276;">Stabil →</td>
+      </tr><tr>
+        <td style="text-align:left;font-weight:600;">CPI</td>
+        <td>2565</td>
+        <td>10/1/2010</td>
+        <td>10/12/2012</td>
+        <td>171.386</td>
+        <td>126.085</td>
+        <td>227.169</td>
+        <td>39.285</td>
+        <td>0.0035</td>
+        <td style="font-weight:700;color:#1a5276;">Stabil →</td>
+      </tr><tr>
+        <td style="text-align:left;font-weight:600;">Unemployment</td>
+        <td>2565</td>
+        <td>10/1/2010</td>
+        <td>10/12/2012</td>
+        <td>8.022</td>
+        <td>3.879</td>
+        <td>14.313</td>
+        <td>1.878</td>
+        <td>-0.0006</td>
+        <td style="font-weight:700;color:#1a5276;">Stabil →</td>
+      </tr></tbody>
+          </table>
+        </div>
+
+<!-- ══ INTELLIGENT INSIGHTS ═══════════════════════════════ -->
+<div class="page-break"></div>
+<h2>5. Intelligent Insights</h2>
+<ul class="avoid-break"><li>Variabel dengan <strong>rata-rata tertinggi</strong>: <strong>Weekly_Sales</strong> (mean = 1046964.878, median = 960746.040)</li><li>Variabel dengan <strong>variabilitas terbesar</strong>: <strong>Weekly_Sales</strong> (std dev = 564366.622, CV = 53.9%) — data paling tersebar.</li><li>Variabel dengan <strong>outlier terbanyak</strong>: <strong>Unemployment</strong> (481 data / 7.5%) — pertimbangkan winsorizing atau robust scaling sebelum modeling.</li><li><strong>Distribusi mendekati normal</strong>: Temperature — siap digunakan untuk analisis parametrik.</li><li><strong>Right skewed</strong>: Weekly_Sales (skew=0.67), Holiday_Flag (skew=3.37), Unemployment (skew=1.19) — data condong ke kiri, ada nilai ekstrem di kanan. Disarankan transformasi log.</li><li>Variabel dengan <strong>variabilitas tinggi (CV > 30%)</strong>: Store (56.5%), Weekly_Sales (53.9%), Holiday_Flag (364.7%), Temperature (30.4%) — perlu normalisasi sebelum digunakan dalam model ML.</li><li>Variabel dengan <strong>outlier</strong>: Weekly_Sales (34 titik), Holiday_Flag (450 titik), Temperature (2 titik), Unemployment (481 titik). Metode IQR digunakan untuk deteksi.</li><li>Korelasi terkuat: <strong>Store</strong> vs <strong>Weekly_Sales</strong> (r = 0.3353) — korelasi lemah.</li><li>✅ <strong>Dataset bersih</strong> — tidak ada missing values dan duplikat. Siap untuk analisis lanjutan atau pemodelan.</li></ul>
+
+<!-- ══ REKOMENDASI ═════════════════════════════════════════ -->
+<h2 style="margin-top:20px;">6. Rekomendasi Analisis Lanjutan</h2>
+<ul class="avoid-break"><li><strong>Transformasi data:</strong> Variabel Weekly_Sales, Holiday_Flag, Unemployment memiliki distribusi skewed. Gunakan transformasi <em>log</em>, <em>sqrt</em>, atau <em>Box-Cox</em> sebelum modeling statistik parametrik.</li><li><strong>Penanganan outlier:</strong> Variabel Weekly_Sales (34 titik), Holiday_Flag (450 titik), Temperature (2 titik), Unemployment (481 titik) masih memiliki outlier. Pertimbangkan <em>winsorizing</em>, <em>trimming</em>, atau gunakan algoritma yang robust terhadap outlier.</li><li><strong>Normalisasi/Standardisasi:</strong> Beberapa variabel memiliki CV > 30%. Gunakan <em>Min-Max Scaling</em> atau <em>Standard Scaler (Z-score)</em> sebelum melatih model machine learning berbasis jarak.</li></ul>
+
+<!-- ══ KESIMPULAN ══════════════════════════════════════════ -->
+<h2 style="margin-top:20px;">7. Kesimpulan</h2>
+<p class="avoid-break">
+  Dataset <strong>Walmart.csv</strong> terdiri dari
+  <strong>6.435 baris</strong> dan
+  <strong>8 kolom</strong> setelah proses cleaning
+  (0 baris dihapus dari 6.435 baris asli).
+  Terdapat <strong>7 variabel numerik</strong>,
+  <strong>0 variabel kategorik</strong>,
+  dan <strong>1 variabel datetime</strong>.
+  Dataset sudah bersih dari missing values.
+   Tidak ada duplikat tersisa.
+  Skor kualitas dataset akhir: <strong style="color:#1a7a2a;">100% (Sangat Baik)</strong>.
+  Laporan ini dihasilkan secara otomatis oleh Auto EDA Analytics Dashboard.
+</p>
+
+<div class="footer">
+  Auto EDA Analytics Dashboard | SD-1306 Data Science Programming | Institut Teknologi Sains Bandung<br>
+  Kota Deltamas Lot-A1 CBD, Jl. Ganesha Boulevard No.1, Cikarang Pusat, Bekasi<br>
+  <span style="font-size:8.5pt;color:#888;">Dicetak otomatis: 10/6/2026, 19.19.26</span>
+</div>
+
+<script>window.onload = () => window.print();</script>
+</body>
+</html>
