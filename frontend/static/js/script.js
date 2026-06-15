@@ -589,6 +589,69 @@ function processFile(file) {
       let delimiter = Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
       const maxCount = Math.max(...Object.values(counts));
 
+      // ── Deteksi LOG TIDAK TERSTRUKTUR ──
+      function looksLikeUnstructuredLog(sampleLines) {
+        // Ambil sampai 20 baris pertama untuk dicek konsistensi delimiter
+        const sample = sampleLines.slice(0, Math.min(20, sampleLines.length));
+        const candidateDelims = ["\t", "|", ";", ","];
+        for (const d of candidateDelims) {
+          const cnts = sample.map(l => (l.match(new RegExp(d === "|" ? "\\|" : d, "g")) || []).length);
+          const allSame = cnts.every(c => c === cnts[0]);
+          const avgCount = cnts.reduce((a,b)=>a+b,0) / cnts.length;
+          if (allSame && avgCount >= 1) return false;
+        }
+
+        // ── Deteksi pola log server (format campuran) ──
+        // Cek apakah mayoritas baris mengandung pola umum log server
+        const logPatterns = [
+          /\d{4}-\d{2}-\d{2}/,           // tanggal YYYY-MM-DD
+          /\d{2}\/\w+\/\d{4}/,            // tanggal DD/Mon/YYYY
+          /\[\d{2}-\d{2}-\d{4}/,          // [DD-MM-YYYY
+          /\d{10,13}/,                     // epoch timestamp
+          /\b(ERROR|WARN|INFO|DEBUG|FATAL|warn|error|info|debug|fatal)\b/,
+          /\b(GET|POST|PUT|DELETE|PATCH)\b/,
+          /\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/, // IP address
+          /\[req-\w+\]/,                   // request id
+          /latency_ms=\d+/,               // key=value log
+          /level=(ERROR|WARN|INFO|DEBUG)/,
+          /service=[\w-]+/,
+          /message="[^"]*"/,
+          /timestamp=\d{4}/,
+          /\b\d+ms\b/,                    // milliseconds
+          /::\s*(fatal|error|warn|info)/i,
+        ];
+
+        let matchCount = 0;
+        sample.forEach(line => {
+          const matchesAny = logPatterns.some(pat => pat.test(line));
+          if (matchesAny) matchCount++;
+        });
+
+        // Jika lebih dari 40% baris cocok pola log server → ini log tidak terstruktur
+        if (matchCount / sample.length >= 0.4) return true;
+
+        return true;
+      }
+
+      if (looksLikeUnstructuredLog(lines)) {
+        const parsedLog = lines.map(l => ({ log_entry: l }));
+        rawData = parsedLog;
+        headers = ["log_entry"];
+        detectColTypes();
+        cleanData = JSON.parse(JSON.stringify(rawData));
+        cleaningLog = [];
+        updateBadge(file.name);
+        renderDatasetQualityCard(file, rawData, headers, colTypes);
+        showFileInfo(file);
+        document.getElementById("file-info-card").style.display = "block";
+        document.getElementById("upload-guide").style.display = "none";
+        addToHistory(file, rawData, headers, colTypes);
+        showNotif(`File TXT <b>${file.name}</b> terdeteksi sebagai log tidak terstruktur — dibaca sebagai 1 kolom "log_entry" (${rawData.length.toLocaleString()} baris)`, "success");
+        const fdLog = new FormData(); fdLog.append("file", file);
+        fetch("/upload", { method: "POST", body: fdLog }).catch(e => console.warn("Gagal simpan ke raw:", e));
+        return;
+      }
+
       // Jika tidak ada delimiter yang jelas, fallback ke PapaParse auto-detect
       if (maxCount === 0) {
         Papa.parse(file, {
@@ -1530,9 +1593,7 @@ function analyzeCleaning() {
   });
   missingAfter = {};
   headers.forEach((h) => {
-    missingAfter[h] = cleanData.filter(
-      (r) => r[h] === "" || r[h] === null || r[h] === undefined,
-    ).length;
+    missingAfter[h] = cleanData.filter((r) => isMissingVal(r[h])).length;
   });
 
   renderAlerts();
@@ -1785,6 +1846,18 @@ function removeDuplicates() {
   });
 }
 
+function isMissingVal(v) {
+  if (v === "" || v === null || v === undefined) return true;
+  const s = String(v).trim().toLowerCase();
+  return s === "nan" || s === "null" || s === "none" || s === "nat" ||
+         s === "undefined" || s === "n/a" || s === "na" || s === "-" ||
+         s === "?" || s === "??" || s === "???" || s === "---" || s === "x" || 
+         s === "unknown" || s === "tidak diketahui" || s === "lainnya" || s === "lain-lain" || 
+         s === "lain lain" || s === "other" || s === "others" || s === "NULL" || s === "N/A" || 
+         s === "NA" || s === "NAN" || s === "NONE" || s === "NAT" || s === "UNDEFINED" || s === "X" || 
+         s === "UNKNOWN" || s === "TIDAK DIKETAHUI" || s === "LAINNYA" || s === "LAIN-LAIN" || s === "LAIN LAIN";
+}
+
 function handleMissingValues() {
   showConfirm(
     "Anda yakin ingin mengganti semua missing value numerik dengan mean, kategorik dengan modus?",
@@ -1797,16 +1870,16 @@ function handleMissingValues() {
             if (!vals.length) return;
             const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
             cleanData.forEach((r) => {
-              if (r[h] === "" || r[h] === null || r[h] === undefined) { r[h] = mean.toFixed(2); filled++; }
+              if (isMissingVal(r[h])) { r[h] = mean.toFixed(2); filled++; }
             });
           } else {
-            const vals = cleanData.map((r) => r[h]).filter((v) => v !== "" && v !== null && v !== undefined);
+            const vals = cleanData.map((r) => r[h]).filter((v) => !isMissingVal(v));
             if (!vals.length) return;
             const freq = {};
             vals.forEach((v) => (freq[v] = (freq[v] || 0) + 1));
             const mode = Object.entries(freq).sort((a, b) => b[1] - a[1])[0][0];
             cleanData.forEach((r) => {
-              if (r[h] === "" || r[h] === null || r[h] === undefined) { r[h] = mode; filled++; }
+              if (isMissingVal(r[h])) { r[h] = mode; filled++; }
             });
           }
         });
@@ -1827,20 +1900,51 @@ function standardizeCategories() {
       showLoadingBar("Menstandarisasi kategori...", 800, () => {
         if (!cleanData.length) return;
         const invalidPatterns = new Set(["???","---","--","-","999","unknown","na","n/a","null","","undefined","nan"]);
-        const aliasMap = {"m":"Male","f":"Female","bachelor degree":"Bachelor","s1":"Bachelor","magister":"Master","s2":"Master","doctor":"Doctoral","s3":"Doctoral","snr manager":"Senior Manager","sr manager":"Senior Manager","lakilaki":"Male","perempuan":"Female",
-          "laki-laki":"Male","perempuan":"Female","laki laki":"Male","ya":"Yes","tidak":"No","true":"Yes","false":"No","x dept":"Unknown","xdept":"Unknown","x department":"Unknown","x departement":"Unknown","unknown dept":"Unknown","unknown department":"Unknown","other":"Unknown","others":"Unknown","lainnya":"Unknown","lain lain":"Unknown","lain-lain":"Unknown","tidak diketahui":"Unknown"};
+        const aliasMap = {
+          "m":"Male","f":"Female",
+          "bachelor degree":"Bachelor","s1":"Bachelor",
+          "magister":"Master","s2":"Master",
+          "doctor":"Doctoral","s3":"Doctoral",
+          "snr manager":"Senior Manager","sr manager":"Senior Manager",
+          "lakilaki":"Male","perempuan":"Female",
+          "laki-laki":"Male","laki laki":"Male",
+          "ya":"Yes","tidak":"No","true":"Yes","false":"No",
+          "x dept":"Unknown","xdept":"Unknown","x department":"Unknown",
+          "x departement":"Unknown","unknown dept":"Unknown",
+          "unknown department":"Unknown","other":"Unknown","others":"Unknown",
+          "lainnya":"Unknown","lain lain":"Unknown","lain-lain":"Unknown",
+          "tidak diketahui":"Unknown",
+          // Unit sensor aliases
+          "celsius":"Celsius","celcius":"Celsius","c":"Celsius","°c":"Celsius","deg c":"Celsius","degreec":"Celsius",
+          "fahrenheit":"Fahrenheit","°f":"Fahrenheit","deg f":"Fahrenheit",
+          "watt":"Watt","w":"Watt","watts":"Watt",
+          "ppm":"Ppm","parts per million":"Ppm",
+          "percent":"Percent","%":"Percent","pct":"Percent","percentage":"Percent",
+          "lux":"Lux","lx":"Lux",
+          "co2":"Co2","carbon dioxide":"Co2",
+          "humidity":"Humidity","rh":"Humidity",
+          "temperature":"Temperature","temp":"Temperature",
+          "motion":"Motion","movement":"Motion",
+          "power":"Power","pwr":"Power",
+          // Status aliases
+          "ok":"Ok","okay":"Ok","normal":"Ok","active":"Ok",
+          "error":"Error","err":"Error","failed":"Error","fail":"Error",
+          "offline":"Offline","off":"Offline","inactive":"Offline","down":"Offline",
+          "warning":"Warning","warn":"Warning","alert":"Warning",
+          "good":"Good","excellent":"Good","fine":"Good"
+        };
         const identifierKeywords = ["id","name","nama","ticket","code","kode","number","no","passport","cabin"];
         const rareThreshold = 0.03;
         const catCols = headers.filter(h => colTypes[h] === "categorical");
         let totalStandardized = 0;
         catCols.forEach(col => {
           if (identifierKeywords.some(k => col.toLowerCase().includes(k))) return;
-          const allVals = cleanData.map(r => { let v = String(r[col] ?? "").trim().toLowerCase(); v = v.replace(/[^a-zA-Z0-9\s]/g,""); return v; });
+          const allVals = cleanData.map(r => { let v = String(r[col] ?? "").trim().toLowerCase(); v = v.replace(/[^a-zA-Z0-9\s°%]/g,"").trim(); return v; });
           const total = allVals.length;
           const freq = {}; allVals.forEach(v => { freq[v]=(freq[v]||0)+1; });
           const rareSet = new Set(Object.entries(freq).filter(([,count])=>count/total<rareThreshold).map(([v])=>v));
           cleanData.forEach(r => {
-            let v = String(r[col] ?? "").trim().toLowerCase(); v = v.replace(/[^a-zA-Z0-9\s]/g,"");
+            let v = String(r[col] ?? "").trim().toLowerCase(); v = v.replace(/[^a-zA-Z0-9\s°%]/g,"").trim();
             if (invalidPatterns.has(v)) { r[col]="Unknown"; totalStandardized++; return; }
             if (aliasMap[v]) { r[col]=aliasMap[v]; totalStandardized++; return; }
             if (rareSet.has(v)) { r[col]="Unknown"; totalStandardized++; return; }
@@ -1859,11 +1963,129 @@ function standardizeCategories() {
   );
 }
 
+function standardizeDatetime() {
+  showConfirm(
+    "Anda yakin ingin menstandarisasi semua kolom datetime? Format akan diseragamkan menjadi YYYY-MM-DD HH:MM:SS.",
+    () => {
+      showLoadingBar("Menstandarisasi datetime...", 800, () => {
+        if (!cleanData.length) return;
+        const dtCols = headers.filter(h => colTypes[h] === "datetime");
+        if (!dtCols.length) {
+          showNotif("Tidak ada kolom datetime yang ditemukan.", "warning");
+          return;
+        }
+        let totalStandardized = 0;
+        dtCols.forEach(col => {
+          cleanData.forEach(r => {
+            const raw = r[col];
+            if (raw === "" || raw === null || raw === undefined) return;
+
+            let parsed = null;
+            const s = String(raw).trim();
+
+            // Hapus nilai null/nan/undefined/n-a sebagai string
+            if (isMissingVal(s)) {
+              r[col] = "";
+              totalStandardized++;
+              return;
+            }
+
+            // Format: epoch float/int (misal: 1685743249.0 atau 1685743249)
+            // Hapus .0 di akhir dulu
+            const sClean = s.replace(/\.0+$/, "");
+
+            // Format YYYYMMDDHHMMSS (14 digit, misal: 20230524000000)
+            if (/^\d{14}$/.test(sClean)) {
+              const y2  = sClean.slice(0, 4);
+              const mo2 = sClean.slice(4, 6);
+              const d2  = sClean.slice(6, 8);
+              const h2  = sClean.slice(8, 10);
+              const mi2 = sClean.slice(10, 12);
+              const se2 = sClean.slice(12, 14);
+              parsed = new Date(`${y2}-${mo2}-${d2}T${h2}:${mi2}:${se2}`);
+            } else if (/^\d{13,}$/.test(sClean)) {
+              // epoch milliseconds
+              parsed = new Date(parseInt(sClean));
+            } else if (/^\d{10}$/.test(sClean)) {
+              // epoch seconds
+              parsed = new Date(parseInt(sClean) * 1000);
+            } else if (/^\d{9}$/.test(sClean)) {
+              // epoch seconds (older dates)
+              parsed = new Date(parseInt(sClean) * 1000);
+            } else {
+              // Format teks — normalize dulu
+
+              let normalized = s;
+
+              // DD/MM/YY → YYYY-MM-DD (2 digit tahun)
+              normalized = normalized.replace(
+                /^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2})$/,
+                (_, d, m, y) => `20${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`
+              );
+
+              // DD/MM/YYYY → YYYY-MM-DD
+              normalized = normalized.replace(
+                /^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/,
+                (_, d, m, y) => `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`
+              );
+
+              // DD/MM/YY HH:MM:SS → YYYY-MM-DD HH:MM:SS
+              normalized = normalized.replace(
+                /^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2})\s+(\d{1,2}:\d{2}(:\d{2})?)$/,
+                (_, d, m, y, time) => `20${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')} ${time}`
+              );
+
+              // DD/MM/YYYY HH:MM:SS → YYYY-MM-DD HH:MM:SS
+              normalized = normalized.replace(
+                /^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})\s+(\d{1,2}:\d{2}(:\d{2})?)$/,
+                (_, d, m, y, time) => `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')} ${time}`
+              );
+
+              // YYYY/MM/DD → YYYY-MM-DD
+              normalized = normalized.replace(
+                /^(\d{4})[\/\.](\d{1,2})[\/\.](\d{1,2})/,
+                (_, y, m, d) => `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`
+              );
+
+              // Normalize spasi ganda
+              normalized = normalized.replace(/\s+/g, ' ').trim();
+
+              parsed = new Date(normalized);
+              if (isNaN(parsed.getTime())) {
+                parsed = new Date(s);
+              }
+            }
+
+            if (!parsed || isNaN(parsed.getTime())) return;
+
+            // Validasi tahun masuk akal (1970–2100)
+            const yr = parsed.getFullYear();
+            if (yr < 1970 || yr > 2100) return;
+
+            const pad = n => String(n).padStart(2,'0');
+            const formatted = `${parsed.getFullYear()}-${pad(parsed.getMonth()+1)}-${pad(parsed.getDate())} ${pad(parsed.getHours())}:${pad(parsed.getMinutes())}:${pad(parsed.getSeconds())}`;
+
+            if (formatted !== raw) {
+              r[col] = formatted;
+              totalStandardized++;
+            }
+          });
+        });
+        addCleaningLog(`Standarisasi Datetime: ${totalStandardized} nilai distandarisasi pada ${dtCols.length} kolom datetime.`);
+        showNotif(`<b>${totalStandardized}</b> nilai datetime distandarisasi ke format YYYY-MM-DD HH:MM:SS.`, "success");
+        analyzeCleaning();
+        renderBeforeAfter();
+        renderCleanPreview();
+      });
+    }
+  );
+}
+
 function applyAllCleaning() {
   showConfirm(
-    "Terapkan semua proses cleaning sekaligus? (Hapus duplikat + Handle missing values + Standardisasi kategori)",
+    "Terapkan semua proses cleaning sekaligus? (Hapus duplikat + Handle missing values + Standardisasi kategori + Standarisasi datetime)",
     () => {
-      showLoadingBar("Menerapkan semua cleaning...", 1200, () => {
+      showLoadingBar("Menerapkan semua cleaning...", 1400, () => {
         let totalLog = [];
 
         // 1. Hapus duplikat
@@ -1888,19 +2110,19 @@ function applyAllCleaning() {
             if (!vals.length) return;
             const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
             cleanData.forEach((r) => {
-              if (r[h] === "" || r[h] === null || r[h] === undefined) {
+              if (isMissingVal(r[h])) {
                 r[h] = mean.toFixed(2);
                 filled++;
               }
             });
           } else {
-            const vals = cleanData.map((r) => r[h]).filter((v) => v !== "" && v !== null && v !== undefined);
+            const vals = cleanData.map((r) => r[h]).filter((v) => !isMissingVal(v));
             if (!vals.length) return;
             const freq = {};
             vals.forEach((v) => (freq[v] = (freq[v] || 0) + 1));
             const mode = Object.entries(freq).sort((a, b) => b[1] - a[1])[0][0];
             cleanData.forEach((r) => {
-              if (r[h] === "" || r[h] === null || r[h] === undefined) {
+              if (isMissingVal(r[h])) {
                 r[h] = mode;
                 filled++;
               }
@@ -1913,19 +2135,49 @@ function applyAllCleaning() {
 
         // 3. Standardisasi kategori
         const invalidPatterns = new Set(["???","---","--","-","999","unknown","na","n/a","null","","undefined","nan"]);
-        const aliasMap = {"m":"Male","f":"Female","bachelor degree":"Bachelor","s1":"Bachelor","magister":"Master","s2":"Master","doctor":"Doctoral","s3":"Doctoral","snr manager":"Senior Manager","sr manager":"Senior Manager","lakilaki":"Male","perempuan":"Female","laki-laki":"Male","perempuan":"Female","laki laki":"Male","ya":"Yes","tidak":"No","true":"Yes","false":"No","x dept":"Unknown","xdept":"Unknown","x department":"Unknown","x departement":"Unknown","unknown dept":"Unknown","unknown department":"Unknown","other":"Unknown","others":"Unknown","lainnya":"Unknown","lain lain":"Unknown","lain-lain":"Unknown","tidak diketahui":"Unknown"};
+        const aliasMap = {
+          "m":"Male","f":"Female",
+          "bachelor degree":"Bachelor","s1":"Bachelor",
+          "magister":"Master","s2":"Master",
+          "doctor":"Doctoral","s3":"Doctoral",
+          "snr manager":"Senior Manager","sr manager":"Senior Manager",
+          "lakilaki":"Male","perempuan":"Female",
+          "laki-laki":"Male","laki laki":"Male",
+          "ya":"Yes","tidak":"No","true":"Yes","false":"No",
+          "x dept":"Unknown","xdept":"Unknown","x department":"Unknown",
+          "x departement":"Unknown","unknown dept":"Unknown",
+          "unknown department":"Unknown","other":"Unknown","others":"Unknown",
+          "lainnya":"Unknown","lain lain":"Unknown","lain-lain":"Unknown",
+          "tidak diketahui":"Unknown",
+          "celsius":"Celsius","celcius":"Celsius","c":"Celsius","°c":"Celsius","deg c":"Celsius","degreec":"Celsius",
+          "fahrenheit":"Fahrenheit","°f":"Fahrenheit","deg f":"Fahrenheit",
+          "watt":"Watt","w":"Watt","watts":"Watt",
+          "ppm":"Ppm","parts per million":"Ppm",
+          "percent":"Percent","%":"Percent","pct":"Percent","percentage":"Percent",
+          "lux":"Lux","lx":"Lux",
+          "co2":"Co2","carbon dioxide":"Co2",
+          "humidity":"Humidity","rh":"Humidity",
+          "temperature":"Temperature","temp":"Temperature",
+          "motion":"Motion","movement":"Motion",
+          "power":"Power","pwr":"Power",
+          "ok":"Ok","okay":"Ok","normal":"Ok","active":"Ok",
+          "error":"Error","err":"Error","failed":"Error","fail":"Error",
+          "offline":"Offline","off":"Offline","inactive":"Offline","down":"Offline",
+          "warning":"Warning","warn":"Warning","alert":"Warning",
+          "good":"Good","excellent":"Good","fine":"Good"
+        };
         const identifierKeywords = ["id","name","nama","ticket","code","kode","number","no","passport","cabin"];
         const rareThreshold = 0.03;
         const catCols = headers.filter(h => colTypes[h] === "categorical");
         let totalStandardized = 0;
         catCols.forEach(col => {
           if (identifierKeywords.some(k => col.toLowerCase().includes(k))) return;
-          const allVals = cleanData.map(r => { let v = String(r[col] ?? "").trim().toLowerCase(); v = v.replace(/[^a-zA-Z0-9\s]/g,""); return v; });
+          const allVals = cleanData.map(r => { let v = String(r[col] ?? "").trim().toLowerCase(); v = v.replace(/[^a-zA-Z0-9\s°%]/g,"").trim(); return v; });
           const total = allVals.length;
           const freq = {}; allVals.forEach(v => { freq[v]=(freq[v]||0)+1; });
           const rareSet = new Set(Object.entries(freq).filter(([,count])=>count/total<rareThreshold).map(([v])=>v));
           cleanData.forEach(r => {
-            let v = String(r[col] ?? "").trim().toLowerCase(); v = v.replace(/[^a-zA-Z0-9\s]/g,"");
+            let v = String(r[col] ?? "").trim().toLowerCase(); v = v.replace(/[^a-zA-Z0-9\s°%]/g,"").trim();
             if (invalidPatterns.has(v)) { r[col]="Unknown"; totalStandardized++; return; }
             if (aliasMap[v]) { r[col]=aliasMap[v]; totalStandardized++; return; }
             if (rareSet.has(v)) { r[col]="Unknown"; totalStandardized++; return; }
@@ -1936,6 +2188,83 @@ function applyAllCleaning() {
         });
         if (totalStandardized > 0) {
           totalLog.push(`Standarisasi Kategori: ${totalStandardized} nilai distandarisasi.`);
+        }
+
+        // 4. Standarisasi datetime
+        const dtCols = headers.filter(h => colTypes[h] === "datetime");
+        let totalDtStd = 0;
+        dtCols.forEach(col => {
+          cleanData.forEach(r => {
+            const raw = r[col];
+            if (raw === "" || raw === null || raw === undefined) return;
+
+            let parsed = null;
+            const s = String(raw).trim();
+
+            if (isMissingVal(s)) {
+              r[col] = "";
+              totalDtStd++;
+              return;
+            }
+
+            const sClean = s.replace(/\.0+$/, "");
+
+            // Format YYYYMMDDHHMMSS (14 digit, misal: 20230524000000)
+            if (/^\d{14}$/.test(sClean)) {
+              const y2  = sClean.slice(0, 4);
+              const mo2 = sClean.slice(4, 6);
+              const d2  = sClean.slice(6, 8);
+              const h2  = sClean.slice(8, 10);
+              const mi2 = sClean.slice(10, 12);
+              const se2 = sClean.slice(12, 14);
+              parsed = new Date(`${y2}-${mo2}-${d2}T${h2}:${mi2}:${se2}`);
+            } else if (/^\d{13,}$/.test(sClean)) {
+              parsed = new Date(parseInt(sClean));
+            } else if (/^\d{10}$/.test(sClean)) {
+              parsed = new Date(parseInt(sClean) * 1000);
+            } else if (/^\d{9}$/.test(sClean)) {
+              parsed = new Date(parseInt(sClean) * 1000);
+            } else {
+              let normalized = s;
+
+              normalized = normalized.replace(
+                /^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2})$/,
+                (_, d, m, y) => `20${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`
+              );
+              normalized = normalized.replace(
+                /^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/,
+                (_, d, m, y) => `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`
+              );
+              normalized = normalized.replace(
+                /^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2})\s+(\d{1,2}:\d{2}(:\d{2})?)$/,
+                (_, d, m, y, time) => `20${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')} ${time}`
+              );
+              normalized = normalized.replace(
+                /^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})\s+(\d{1,2}:\d{2}(:\d{2})?)$/,
+                (_, d, m, y, time) => `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')} ${time}`
+              );
+              normalized = normalized.replace(
+                /^(\d{4})[\/\.](\d{1,2})[\/\.](\d{1,2})/,
+                (_, y, m, d) => `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`
+              );
+              normalized = normalized.replace(/\s+/g, ' ').trim();
+
+              parsed = new Date(normalized);
+              if (isNaN(parsed.getTime())) parsed = new Date(s);
+            }
+
+            if (!parsed || isNaN(parsed.getTime())) return;
+
+            const yr = parsed.getFullYear();
+            if (yr < 1970 || yr > 2100) return;
+
+            const pad = n => String(n).padStart(2,'0');
+            const formatted = `${parsed.getFullYear()}-${pad(parsed.getMonth()+1)}-${pad(parsed.getDate())} ${pad(parsed.getHours())}:${pad(parsed.getMinutes())}:${pad(parsed.getSeconds())}`;
+            if (formatted !== raw) { r[col] = formatted; totalDtStd++; }
+          });
+        });
+        if (totalDtStd > 0) {
+          totalLog.push(`Standarisasi Datetime: ${totalDtStd} nilai distandarisasi.`);
         }
 
         // Log & refresh
@@ -4836,31 +5165,19 @@ function initTimeSeries() {
     const parsed = vals.map(v => new Date(v)).filter(d => !isNaN(d.getTime()));
     if (parsed.length < 3) return false;
 
-    // Hitung unique di level bulan-tahun
-    const monthKeys = parsed.map(d => `${d.getFullYear()}-${String(d.getMonth()).padStart(2,'0')}`);
-    const uniqueMonths = new Set(monthKeys).size;
+    // Hitung unique di level hari (lebih granular dari bulan/tahun)
+    const dayKeys = parsed.map(d => d.toDateString());
+    const uniqueDays = new Set(dayKeys).size;
 
-    // Hitung unique di level tahun
-    const yearKeys = parsed.map(d => `${d.getFullYear()}`);
-    const uniqueYears = new Set(yearKeys).size;
+    // Syarat minimal: ada setidaknya 2 titik waktu berbeda (di level hari)
+    // Ini cukup untuk membentuk garis time series, granularitas akan
+    // ditentukan secara dinamis di renderTimeSeries() (per jam/hari/minggu/bulan/tahun)
+    if (uniqueDays >= 2) return true;
 
-    // Hitung unique tanggal penuh
-    const uniqueDates = new Set(parsed.map(d => d.toDateString())).size;
-
-    const totalRows = parsed.length;
-
-    // SYARAT UTAMA: ada pengulangan periode
-    // Jika rata-rata baris per bulan >= 2 → ada agregasi yang bermakna
-    const avgRowsPerMonth = totalRows / uniqueMonths;
-    if (avgRowsPerMonth >= 2 && uniqueMonths >= 3) return true;
-
-    // Jika rata-rata baris per tahun >= 5 → cocok diagregasi per tahun
-    const avgRowsPerYear = totalRows / uniqueYears;
-    if (avgRowsPerYear >= 5 && uniqueYears >= 2) return true;
-
-    // TOLAK: jika hampir setiap baris punya tanggal unik (transaksi harian per baris)
-    // uniqueDates / totalRows > 0.7 berarti 70%+ baris punya tanggal berbeda → tidak cocok
-    if (uniqueDates / totalRows > 0.7) return false;
+    // Jika semua data dalam 1 hari yang sama, masih bisa dipakai
+    // selama ada variasi waktu (jam/menit) yang cukup
+    const uniqueTimestamps = new Set(parsed.map(d => d.getTime())).size;
+    if (uniqueTimestamps >= 3) return true;
 
     return false;
   }
@@ -4923,72 +5240,157 @@ function renderTimeSeries() {
 
   if (!raw.length) return;
 
-  // ── Tentukan granularitas agregasi ────────────────────────
+  // ── Tentukan granularitas dasar (untuk line chart utama) ──
+  const uniqueHours  = new Set(raw.map(d => `${d.date.getFullYear()}-${d.date.getMonth()}-${d.date.getDate()}-${d.date.getHours()}`)).size;
+  const uniqueDays   = new Set(raw.map(d => d.date.toDateString())).size;
+  const uniqueWeeks  = new Set(raw.map(d => {
+    const tmp = new Date(d.date);
+    const dayNum = (tmp.getDay() + 6) % 7; // Senin = 0
+    tmp.setDate(tmp.getDate() - dayNum);
+    return tmp.toDateString();
+  })).size;
   const uniqueMonths = new Set(raw.map(d => `${d.date.getFullYear()}-${d.date.getMonth()}`)).size;
   const uniqueYears  = new Set(raw.map(d => `${d.date.getFullYear()}`)).size;
   const totalRows    = raw.length;
 
-  let keyFn, labelFn, granLabel;
-
+  // Pilih granularitas dasar (untuk chart 1: Line)
+  let baseKeyFn, baseLabelFn, baseGranLabel;
   const avgPerMonth = totalRows / uniqueMonths;
   const avgPerYear  = totalRows / uniqueYears;
+  const avgPerDay   = totalRows / uniqueDays;
+  const avgPerHour  = totalRows / uniqueHours;
 
   if (avgPerYear >= 5 && uniqueYears >= 2 && uniqueMonths <= 12) {
-    keyFn      = d => `${d.getFullYear()}`;
-    labelFn    = k => k;
-    granLabel  = "per Tahun";
+    baseKeyFn     = d => `${d.getFullYear()}`;
+    baseLabelFn   = k => k;
+    baseGranLabel = "per Tahun";
   } else if (avgPerMonth >= 2 && uniqueMonths >= 3) {
-    keyFn      = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-    labelFn    = k => {
+    baseKeyFn     = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    baseLabelFn   = k => {
       const [y, m] = k.split('-');
       return new Date(y, m - 1).toLocaleDateString('id-ID', { month: 'short', year: '2-digit' });
     };
-    granLabel  = "per Bulan";
+    baseGranLabel = "per Bulan";
+  } else if (avgPerDay >= 2 && uniqueDays >= 3) {
+    baseKeyFn     = d => d.toDateString();
+    baseLabelFn   = k => new Date(k).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: '2-digit' });
+    baseGranLabel = "per Hari";
+  } else if (avgPerHour >= 2 && uniqueHours >= 3) {
+    baseKeyFn     = d => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}-${String(d.getHours()).padStart(2,'0')}`;
+    baseLabelFn   = k => {
+      const parts = k.split('-');
+      const dt = new Date(parts[0], parts[1], parts[2], parts[3]);
+      return dt.toLocaleDateString('id-ID', { day: '2-digit', month: 'short' }) + ' ' + String(parts[3]).padStart(2,'0') + ':00';
+    };
+    baseGranLabel = "per Jam";
   } else {
-    keyFn      = d => d.toDateString();
-    labelFn    = k => new Date(k).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: '2-digit' });
-    granLabel  = "per Hari";
+    baseKeyFn     = d => d.toDateString();
+    baseLabelFn   = k => new Date(k).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: '2-digit' });
+    baseGranLabel = "per Hari";
   }
 
-  // ── Agregasi SUM per periode ──────────────────────────────
-  const aggMap = new Map();
-  raw.forEach(({ date, val }) => {
-    const key = keyFn(date);
-    if (!aggMap.has(key)) aggMap.set(key, { sum: 0, date });
-    aggMap.get(key).sum += val;
-  });
+  // Helper agregasi generik
+  function aggregateBy(keyFn, labelFn) {
+    const map = new Map();
+    raw.forEach(({ date, val }) => {
+      const key = keyFn(date);
+      if (!map.has(key)) map.set(key, { sum: 0, date });
+      map.get(key).sum += val;
+    });
+    const entries = Array.from(map.entries()).sort((a, b) => a[1].date - b[1].date);
+    return {
+      labels: entries.map(([k]) => labelFn(k)),
+      values: entries.map(([, v]) => v.sum),
+      entries
+    };
+  }
 
-  const aggEntries = Array.from(aggMap.entries()).sort((a, b) => a[1].date - b[1].date);
-  const labels = aggEntries.map(([k]) => labelFn(k));
-  const values = aggEntries.map(([, v]) => v.sum);
+  // ── Chart 1: Line Chart — granularitas dasar (paling detail) ──
+  const baseAgg = aggregateBy(baseKeyFn, baseLabelFn);
+  const labels  = baseAgg.labels;
+  const values  = baseAgg.values;
+  const aggEntries = baseAgg.entries;
+  const granLabel = baseGranLabel;
 
   if (!labels.length) return;
 
   const n = values.length;
 
-  // ── MA-7 ──────────────────────────────────────────────────
-  const ma7 = values.map((_, i) => {
-    if (i < 6) return null;
-    return values.slice(i - 6, i + 1).reduce((a, b) => a + b, 0) / 7;
+  // ── Chart 2: Moving Average — agregasi per Minggu + MA 4 minggu ──
+  let weekAgg = null;
+  if (uniqueWeeks >= 3) {
+    weekAgg = aggregateBy(
+      d => {
+        const tmp = new Date(d);
+        const dayNum = (tmp.getDay() + 6) % 7;
+        tmp.setDate(tmp.getDate() - dayNum);
+        return tmp.toDateString();
+      },
+      k => {
+        const dt = new Date(k);
+        return 'Minggu ' + dt.toLocaleDateString('id-ID', { day: '2-digit', month: 'short' });
+      }
+    );
+  }
+  const maData   = weekAgg && weekAgg.values.length >= 3 ? weekAgg : baseAgg;
+  const maLabels = maData.labels;
+  const maValues = maData.values;
+  const maGranLabel = (maData === weekAgg) ? "per Minggu" : baseGranLabel;
+  const maWindow = (maData === weekAgg) ? Math.min(4, Math.max(2, Math.floor(maValues.length / 2))) : 7;
+  const ma7 = maValues.map((_, i) => {
+    if (i < maWindow - 1) return null;
+    return maValues.slice(i - maWindow + 1, i + 1).reduce((a, b) => a + b, 0) / maWindow;
   });
 
-  // ── Rolling Mean 30 ───────────────────────────────────────
-  const roll30 = values.map((_, i) => {
-    const sl = values.slice(Math.max(0, i - 29), i + 1);
+  // ── Chart 3: Rolling Mean — agregasi per Bulan + Rolling 3 bulan ──
+  let monthAgg = null;
+  if (uniqueMonths >= 3) {
+    monthAgg = aggregateBy(
+      d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`,
+      k => {
+        const [y, m] = k.split('-');
+        return new Date(y, m - 1).toLocaleDateString('id-ID', { month: 'short', year: '2-digit' });
+      }
+    );
+  }
+  const rollData   = monthAgg && monthAgg.values.length >= 3 ? monthAgg : baseAgg;
+  const rollLabels = rollData.labels;
+  const rollValues = rollData.values;
+  const rollGranLabel = (rollData === monthAgg) ? "per Bulan" : baseGranLabel;
+  const rollWindow = (rollData === monthAgg) ? Math.min(3, Math.max(2, Math.floor(rollValues.length / 2))) : 30;
+  const roll30 = rollValues.map((_, i) => {
+    const sl = rollValues.slice(Math.max(0, i - rollWindow + 1), i + 1);
     return sl.reduce((a, b) => a + b, 0) / sl.length;
   });
 
+  // ── Chart 4: Trend Line — agregasi per Tahun jika cukup, kalau tidak pakai base ──
+  let yearAgg = null;
+  if (uniqueYears >= 3) {
+    yearAgg = aggregateBy(
+      d => `${d.getFullYear()}`,
+      k => k
+    );
+  }
+  const trendData   = yearAgg && yearAgg.values.length >= 3 ? yearAgg : baseAgg;
+  const trendLabels = trendData.labels;
+  const trendValues = trendData.values;
+  const trendGranLabel = (trendData === yearAgg) ? "per Tahun" : baseGranLabel;
+
   // ── Trend (regresi linear) ────────────────────────────────
-  const xs        = values.map((_, i) => i);
-  const xMean     = xs.reduce((a, b) => a + b, 0) / n;
-  const yMean     = values.reduce((a, b) => a + b, 0) / n;
+  const tn        = trendValues.length;
+  const xs        = trendValues.map((_, i) => i);
+  const xMean     = xs.reduce((a, b) => a + b, 0) / tn;
+  const yMean     = trendValues.reduce((a, b) => a + b, 0) / tn;
   const denom     = xs.reduce((acc, x) => acc + (x - xMean) ** 2, 0);
-  const slope     = denom === 0 ? 0 : xs.reduce((acc, x, i) => acc + (x - xMean) * (values[i] - yMean), 0) / denom;
+  const slope     = denom === 0 ? 0 : xs.reduce((acc, x, i) => acc + (x - xMean) * (trendValues[i] - yMean), 0) / denom;
   const intercept = yMean - slope * xMean;
   const trendLine = xs.map(x => parseFloat((intercept + slope * x).toFixed(2)));
 
   // ── Point radius: tampilkan titik kalau data sedikit ──────
   const ptRadius = n <= 24 ? 4 : n <= 60 ? 2 : 0;
+  const maPtRadius = maValues.length <= 24 ? 3 : 0;
+  const rollPtRadius = rollValues.length <= 24 ? 0 : 0;
+  const trendPtRadius = tn <= 24 ? 4 : tn <= 60 ? 2 : 0;
 
   // ── Shared chart options factory ──────────────────────────
   function makeOpts(titleText) {
@@ -5054,7 +5456,11 @@ function renderTimeSeries() {
   // ── Destroy semua chart dulu, baru render ─────────────────
   ["ts-line-chart","ts-ma-chart","ts-roll-chart","ts-trend-chart"].forEach(id => destroyChart(id));
 
-  // ── 1. Time Series Line Chart ─────────────────────────────
+  // Hitung nilai bantu tambahan (untuk chart 1 - line chart utama)
+  const tsMaxVal = Math.max(...values);
+  const tsMinVal = Math.min(...values);
+
+  // ── 1. Time Series Line Chart — data mentah + area + titik ─
   chartInstances["ts-line-chart"] = new Chart(
     document.getElementById("ts-line-chart"), {
       type: "line",
@@ -5063,12 +5469,14 @@ function renderTimeSeries() {
         datasets: [{
           label: valCol,
           data: values,
-          borderColor: "#d4a800",         // kuning lebih gelap agar terlihat
+          borderColor: "#d4a800",
           backgroundColor: "rgba(245,230,66,0.18)",
           fill: true,
-          tension: 0,                      // STRAIGHT lines, bukan smooth
+          tension: 0,
           pointRadius: ptRadius,
           pointBackgroundColor: "#d4a800",
+          pointBorderColor: "#fff",
+          pointBorderWidth: 1.5,
           borderWidth: 2,
         }],
       },
@@ -5076,43 +5484,52 @@ function renderTimeSeries() {
     }
   );
 
-  // ── 2. Moving Average ─────────────────────────────────────
+  // ── 2. Moving Average — Bar data asli + garis MA di atas ──
+  // Tujuan: lihat fluktuasi tiap periode vs rata-rata bergerak jangka pendek
   chartInstances["ts-ma-chart"] = new Chart(
     document.getElementById("ts-ma-chart"), {
-      type: "line",
+      type: "bar",
       data: {
-        labels,
+        labels: maLabels,
         datasets: [
           {
-            label: valCol,
-            data: values,
-            borderColor: "rgb(243, 111, 208)",
-            fill: false,
-            tension: 0,
-            pointRadius: 0,
-            borderWidth: 1.5,
+            type: "bar",
+            label: `${valCol} (${maGranLabel})`,
+            data: maValues,
+            backgroundColor: "rgba(243,111,208,0.35)",
+            borderColor: "rgba(243,111,208,0.7)",
+            borderWidth: 1,
+            borderRadius: 3,
+            yAxisID: "y",
+            order: 2,
           },
           {
-            label: "Moving Average (7)",
+            type: "line",
+            label: `Moving Average (${maWindow})`,
             data: ma7,
-            borderColor: "#c2006f",
+            borderColor: "#8b0057",
+            backgroundColor: "transparent",
             fill: false,
-            tension: 0,
-            pointRadius: values.length <= 24 ? 3 : 0,
-            pointBackgroundColor: "#c2006f",
+            tension: 0.3,
+            pointRadius: maPtRadius,
+            pointBackgroundColor: "#8b0057",
+            pointBorderColor: "#fff",
+            pointBorderWidth: 1.5,
             borderWidth: 2.5,
+            yAxisID: "y",
+            order: 1,
           },
         ],
       },
       options: {
-        ...makeOpts(`Moving Average 7 Periode — ${valCol}`),
+        ...makeOpts(`Moving Average ${maWindow} (${maGranLabel}) — ${valCol}`),
         plugins: {
           ...makeOpts("").plugins,
           title: {
             display: true,
-            text: `Moving Average 7 Periode — ${valCol}`,
+            text: `Moving Average ${maWindow} (${maGranLabel}) — ${valCol}`,
             font: { family: "DM Sans", size: 13, weight: "bold" },
-            color: "#1a1a1a",
+            color: document.body.classList.contains("dark-mode") ? "#ffffff" : "#1a1a1a",
           },
           legend: {
             display: true,
@@ -5120,47 +5537,86 @@ function renderTimeSeries() {
             labels: { font: { family: "DM Sans", size: 11 }, boxWidth: 14 },
           },
           datalabels: { display: false },
+          tooltip: {
+            mode: "index",
+            intersect: false,
+            callbacks: {
+              afterBody: (ctxArr) => {
+                const i = ctxArr[0]?.dataIndex;
+                if (i === undefined) return [];
+                const ma = ma7[i];
+                const v = maValues[i];
+                if (ma === null || ma === undefined) return [];
+                const diff = v - ma;
+                return [`Selisih vs MA${maWindow}: ${diff >= 0 ? "+" : ""}${diff.toLocaleString("id-ID", {maximumFractionDigits:1})}`];
+              }
+            }
+          }
         },
       },
     }
   );
 
-  // ── 3. Rolling Mean ───────────────────────────────────────
+  // ── 3. Rolling Mean — Area chart dengan shading gap ───────
+  // Tujuan: lihat seberapa jauh data asli menyimpang dari rata-rata jangka panjang
+  // Dataset "atas" dan "bawah" untuk mengisi area antara data dan rolling mean
+  const aboveData = values.map((v, i) => Math.max(v, roll30[i]));
+  const belowData = values.map((v, i) => Math.min(v, roll30[i]));
+
+  const rollGlobalMean = rollValues.reduce((a,b)=>a+b,0) / rollValues.length;
+
   chartInstances["ts-roll-chart"] = new Chart(
     document.getElementById("ts-roll-chart"), {
       type: "line",
       data: {
-        labels,
+        labels: rollLabels,
         datasets: [
           {
-            label: valCol,
-            data: values,
-            borderColor: "rgb(140, 164, 241)",
+            label: `${valCol} (${rollGranLabel})`,
+            data: rollValues,
+            borderColor: "rgba(80,140,255,0.9)",
+            backgroundColor: "rgba(80,140,255,0.08)",
+            fill: "+1",
+            tension: 0,
+            pointRadius: rollPtRadius,
+            borderWidth: 1.5,
+            order: 2,
+          },
+          {
+            label: `Rolling Mean (${rollWindow}) — tren jangka panjang`,
+            data: roll30,
+            borderColor: "#1a6e00",
+            backgroundColor: "rgba(26,110,0,0.08)",
+            fill: "-1",
+            tension: 0.3,
+            pointRadius: 0,
+            borderWidth: 2.5,
+            borderDash: [],
+            order: 1,
+          },
+          {
+            label: `Rata-rata global (${Math.round(rollGlobalMean).toLocaleString("id-ID")})`,
+            data: Array(rollValues.length).fill(rollGlobalMean),
+            borderColor: "rgba(200,100,0,0.5)",
+            backgroundColor: "transparent",
             fill: false,
             tension: 0,
             pointRadius: 0,
             borderWidth: 1.5,
-          },
-          {
-            label: "Rolling Mean (30)",
-            data: roll30,
-            borderColor: "#2d7a00",
-            fill: false,
-            tension: 0,
-            pointRadius: 0,
-            borderWidth: 2.5,
+            borderDash: [6, 4],
+            order: 3,
           },
         ],
       },
       options: {
-        ...makeOpts(`Rolling Mean 30 Periode — ${valCol}`),
+        ...makeOpts(`Rolling Mean ${rollWindow} (${rollGranLabel}) — ${valCol}`),
         plugins: {
           ...makeOpts("").plugins,
           title: {
             display: true,
-            text: `Rolling Mean 30 Periode — ${valCol}`,
+            text: `Rolling Mean ${rollWindow} (${rollGranLabel}) — ${valCol}`,
             font: { family: "DM Sans", size: 13, weight: "bold" },
-            color: "#1a1a1a",
+            color: document.body.classList.contains("dark-mode") ? "#ffffff" : "#1a1a1a",
           },
           legend: {
             display: true,
@@ -5168,48 +5624,101 @@ function renderTimeSeries() {
             labels: { font: { family: "DM Sans", size: 11 }, boxWidth: 14 },
           },
           datalabels: { display: false },
+          tooltip: {
+            mode: "index",
+            intersect: false,
+            callbacks: {
+              afterBody: (ctxArr) => {
+                const i = ctxArr[0]?.dataIndex;
+                if (i === undefined) return [];
+                const v = rollValues[i];
+                const rm = roll30[i];
+                const pct = rm > 0 ? (((v - rm) / rm) * 100).toFixed(1) : "0";
+                return [`Deviasi dari Rolling Mean: ${pct >= 0 ? "+" : ""}${pct}%`];
+              }
+            }
+          }
         },
       },
     }
   );
 
-  // ── 4. Trend Line ─────────────────────────────────────────
+  // ── 4. Trend Line — hanya trend + zona above/below ────────
+  // Tujuan: lihat arah pergerakan jangka panjang, bersih tanpa noise
+  // Klasifikasi tiap titik: di atas atau di bawah trend
+  const trendGlobalMean = trendValues.reduce((a,b)=>a+b,0) / trendValues.length;
+  const aboveTrend = trendValues.map((v, i) => v >= trendLine[i] ? v : null);
+  const belowTrend = trendValues.map((v, i) => v < trendLine[i] ? v : null);
+
   chartInstances["ts-trend-chart"] = new Chart(
     document.getElementById("ts-trend-chart"), {
       type: "line",
       data: {
-        labels,
+        labels: trendLabels,
         datasets: [
           {
-            label: valCol,
-            data: values,
-            borderColor: "rgba(52, 232, 151, 0.81)",
+            label: `${valCol} > trend (di atas)`,
+            data: aboveTrend,
+            borderColor: "rgba(26,160,80,0.7)",
+            backgroundColor: "rgba(26,160,80,0.12)",
             fill: false,
             tension: 0,
-            pointRadius: 0,
+            pointRadius: trendPtRadius > 0 ? trendPtRadius + 1 : 2,
+            pointBackgroundColor: "rgba(26,160,80,0.8)",
+            pointBorderColor: "transparent",
             borderWidth: 1.5,
+            spanGaps: false,
+            order: 3,
           },
           {
-            label: "Trend Line",
+            label: `${valCol} < trend (di bawah)`,
+            data: belowTrend,
+            borderColor: "rgba(200,50,50,0.7)",
+            backgroundColor: "rgba(200,50,50,0.12)",
+            fill: false,
+            tension: 0,
+            pointRadius: trendPtRadius > 0 ? trendPtRadius + 1 : 2,
+            pointBackgroundColor: "rgba(200,50,50,0.8)",
+            pointBorderColor: "transparent",
+            borderWidth: 1.5,
+            spanGaps: false,
+            order: 3,
+          },
+          {
+            label: `Trend Line (${slope >= 0 ? "↑ Naik" : "↓ Turun"})`,
             data: trendLine,
             borderColor: "#cc1a1a",
+            backgroundColor: "transparent",
             fill: false,
             tension: 0,
             pointRadius: 0,
             borderWidth: 2.5,
-            borderDash: [8, 4],
+            borderDash: [10, 4],
+            order: 1,
+          },
+          {
+            label: `Rata-rata (${Math.round(trendGlobalMean).toLocaleString("id-ID")})`,
+            data: Array(trendValues.length).fill(trendGlobalMean),
+            borderColor: "rgba(100,100,200,0.5)",
+            backgroundColor: "transparent",
+            fill: false,
+            tension: 0,
+            pointRadius: 0,
+            borderWidth: 1.5,
+            borderDash: [4, 4],
+            order: 2,
           },
         ],
       },
       options: {
-        ...makeOpts(`Trend Line — ${valCol}`),
+        ...makeOpts(`Analisis Tren (${trendGranLabel}) — ${valCol}`),
         plugins: {
           ...makeOpts("").plugins,
           title: {
             display: true,
-            text: `Trend Line — ${valCol}`,
-            font: { family: "DM Sans", size: 13, weight: "bold" },
-            color: "#1a1a1a",
+            text: `Analisis Tren (${trendGranLabel}) — ${valCol} (Hijau = di atas trend, Merah = di bawah trend)`,
+            font: { family: "DM Sans", size: 12, weight: "bold" },
+            color: document.body.classList.contains("dark-mode") ? "#ffffff" : "#1a1a1a",
           },
           legend: {
             display: true,
@@ -5217,6 +5726,24 @@ function renderTimeSeries() {
             labels: { font: { family: "DM Sans", size: 11 }, boxWidth: 14 },
           },
           datalabels: { display: false },
+          tooltip: {
+            mode: "index",
+            intersect: false,
+            callbacks: {
+              afterBody: (ctxArr) => {
+                const i = ctxArr[0]?.dataIndex;
+                if (i === undefined) return [];
+                const v = trendValues[i];
+                const tr = trendLine[i];
+                const diff = v - tr;
+                const status = diff >= 0 ? "↑ di atas trend" : "↓ di bawah trend";
+                return [
+                  `Trend prediksi: ${Math.round(tr).toLocaleString("id-ID")}`,
+                  `Status: ${status} (${diff >= 0 ? "+" : ""}${Math.round(diff).toLocaleString("id-ID")})`
+                ];
+              }
+            }
+          }
         },
       },
     }
@@ -9419,6 +9946,20 @@ function injectScrollHints(root) {
       el.addEventListener("touchstart", showOnce, { once: true, passive: true });
     });
   }, 400);
+}
+
+// ===== TOGGLE PASSWORD VISIBILITY =====
+function togglePasswordVisibility(inputId, iconId) {
+  const input = document.getElementById(inputId);
+  const icon  = document.getElementById(iconId);
+  if (!input) return;
+  const isHidden = input.type === "password";
+  input.type = isHidden ? "text" : "password";
+  if (icon) {
+    icon.innerHTML = isHidden
+      ? `<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/>`
+      : `<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>`;
+  }
 }
 
 // INIT
